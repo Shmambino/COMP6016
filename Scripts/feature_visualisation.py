@@ -8,7 +8,7 @@ import polars.selectors as cs
 
 
 def main():
-    """
+
     final_RP_df = pl.read_csv("../Data/healthy_rp.csv")
     final_RP_df_abnormal = pl.read_csv("../Data/unhealthy_rp.csv")
     healthy_googlenet_features_pretrained = (
@@ -93,7 +93,7 @@ def main():
 
     fig = px.scatter(df, x="pca_1", y="pca_2", color="label")
     fig.write_html("PCA_vis.html")
-    """
+
     # import
     healthy_googlenet_features_pretrained = (
         pl.read_csv("../Data/healthy_googlenet.csv")

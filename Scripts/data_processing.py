@@ -1,6 +1,7 @@
 ## Data Processing script for Campbell Eaton [18824421] - COMP6016 - Final Project
 import polars as pl
 from classes import dataset
+from pathlib import Path
 
 
 def main():
@@ -44,9 +45,19 @@ def main():
     healthy_features_df = healthy_dataset.out_features()
     unhealthy_features_df = unhealthy_dataset.out_features()
 
+    # specify filenames to save
+    output_file1 = "healthy_rp.csv"
+    output_file2 = "unhealthy_rp.csv"
+
+    # specify output directories
+    out_dir1 = Path("../Data")
+    out_dir2 = Path("../Data")
+    out_dir1.mkdir(parents=True, exist_ok=True)
+    out_dir2.mkdir(parents=True, exist_ok=True)
+
     # save feature dataframes
-    healthy_features_df.collect().write_csv("../Data/healthy_rp.csv")
-    unhealthy_features_df.collect().write_csv("../Data/unhealthy_rp.csv")
+    healthy_features_df.collect().write_csv(output_file1 / out_dir1)
+    unhealthy_features_df.collect().write_csv(output_file1 / out_dir1)
 
 
 if __name__ == "__main__":
