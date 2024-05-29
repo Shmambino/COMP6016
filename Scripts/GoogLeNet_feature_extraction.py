@@ -1,6 +1,6 @@
 ## Feature Extraction from CNN - script for Campbell Eaton [18824421] - COMP6016 - Final Project
 
-from Scripts.classes_z import rp_dataset, GoogLeNet
+from classes import rp_dataset, GoogLeNet
 
 import torch
 import torch.nn as nn  # All neural network modules, nn.Linear, nn.Conv2d, BatchNorm, Loss functions

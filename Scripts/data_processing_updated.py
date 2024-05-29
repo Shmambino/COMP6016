@@ -1,6 +1,6 @@
 ## Data Processing script for Campbell Eaton [18824421] - COMP6016 - Final Project
 import polars as pl
-from Scripts.classes_z import dataset
+from classes import dataset
 from pathlib import Path
 
 

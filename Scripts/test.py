@@ -1,4 +1,4 @@
-from Scripts.classes_z import GoogLeNet_ft, GoogLeNet
+from classes import GoogLeNet_ft, GoogLeNet
 from contextlib import redirect_stdout
 
 
