@@ -3,7 +3,7 @@
 
 **Virtual Environment**
 
-  Use "environment.yml" to recreate virtual environment.
+  Use "environment.yml" to recreate virtual environment. If this doesn't work (i.e os dependant), please recreate manually by running the file inside a fresh virtual environment
 
   
 
