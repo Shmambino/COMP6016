@@ -142,8 +142,8 @@ def main():
             if model.test_loss[-1] > best_loss:
                 print("Early Stopping!")
                 break
-            else:  # take min value of every second occurance (test loss for target iteration in loop)
-                best_loss = min(model.test_loss[1::2])
+            else:
+                best_loss = min(model.test_loss[:])
 
     plt.plot(model.train_loss, label="Train")
     plt.plot(model.test_loss, label="Test")
