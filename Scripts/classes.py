@@ -230,6 +230,8 @@ class GoogLeNet_ft(nn.Module):
         )
         self.train_loss = []
         self.test_loss = []
+        self.preds = []
+        self.labels = []
 
         # define aux classifiers (dropout taken from model definition)
         self.model.aux1 = self.model.inception_aux_block(512, 1, dropout=0.7)
@@ -262,10 +264,8 @@ class GoogLeNet_ft(nn.Module):
             param.requires_grad = True
         for param in self.model.aux2.parameters():
             param.requires_grad = True
-        """
         for param in self.model.inception5b.parameters():
-            param.requires_grad = 
-        """
+            param.requires_grad = True
 
     def forward(self, x):
         x = self.model(x)

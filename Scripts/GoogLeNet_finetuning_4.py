@@ -14,6 +14,7 @@ from tqdm import trange
 from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 
 
 def main():
@@ -135,15 +136,15 @@ def main():
         print("\nTesting..")
         model.model_test(sequential_test_dataloader, shuffled_test_dataloader, loss_fn)
 
-        if t == 1:
-            model.test_loss[-1] = best_loss
+        if t == 0:
+            best_loss = model.test_loss[-1]
 
-        if t + 1 % 5 == 0:  # check every 5 epochs
+        if (t + 1) % 5 == 0:  # check every 5 epochs
             if model.test_loss[-1] > best_loss:
                 print("Early Stopping!")
                 break
             else:
-                best_loss = min(model.test_loss[:])
+                best_loss = min(model.test_loss)
 
     plt.plot(model.train_loss, label="Train")
     plt.plot(model.test_loss, label="Test")
