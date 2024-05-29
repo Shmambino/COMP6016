@@ -26,6 +26,7 @@ import torchinfo
 import os
 from torch.utils.data import Dataset
 import numpy as np
+from torcheval.metrics.functional import binary_accuracy
 
 
 class dataset:
@@ -39,6 +40,8 @@ class dataset:
         n_rows: int,
         stride: int,
         iterations: int,
+        distance: float,
+        length: int,
         target: str,
     ):
         self.raw_data = raw_data
@@ -56,6 +59,8 @@ class dataset:
         self.final_feature_df = None
         self.curr_iteration = 0
         self.target = target
+        self.distance = distance
+        self.length = length
 
     def transform(self):
         """
@@ -112,6 +117,8 @@ class dataset:
             self.curr_iteration,
             self.dates,
             self.data_idx,
+            self.distance,
+            self.length,
             target=self.target,
         )
 
@@ -136,7 +143,7 @@ class rp_dataset(Dataset):
     def __init__(self, mapping, data_dir, transform=None):
         self.data = data_dir  # directory for training data
         self.mapping = pd.read_csv(
-            mapping, header=None, index_col=0
+            mapping, header=None, index_col=None
         )  # file for rp plot names
         self.transform = transform  # transformations
 
@@ -145,10 +152,10 @@ class rp_dataset(Dataset):
 
     def __getitem__(self, idx):
         rp_path = os.path.join(
-            self.data, self.mapping.iloc[idx, 0]
+            self.data, self.mapping.iloc[idx, 1]
         )  # create path to plot
         rp = read_image(rp_path)
-        y_label = torch.tensor(int(self.mapping.iloc[idx, 3]))
+        y_label = torch.tensor(int(self.mapping.iloc[idx, 4]))
 
         if self.transform:
             rp = self.transform(rp)
@@ -218,71 +225,152 @@ class GoogLeNet_ft(nn.Module):
     def __init__(self):
         super(GoogLeNet_ft, self).__init__()
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model = torchvision.models.googlenet(weights="GoogLeNet_Weights.DEFAULT")
+        self.model = torchvision.models.googlenet(
+            weights="GoogLeNet_Weights.DEFAULT", aux_logits=True
+        )
+        self.train_loss = []
+        self.test_loss = []
+
+        # define aux classifiers (dropout taken from model definition)
+        self.model.aux1 = self.model.inception_aux_block(512, 1, dropout=0.7)
+        self.model.aux2 = self.model.inception_aux_block(528, 1, dropout=0.7)
 
         # specify new fc layer
-        self.fc = nn.Sequential(
+        self.model.fc = nn.Sequential(
             nn.Linear(1024, 512, bias=False),
+            nn.Dropout(0.5),
             nn.ReLU(inplace=True),
-            nn.Dropout(0.2),
             nn.Linear(512, 256, bias=False),
+            nn.Dropout(0.5),
             nn.ReLU(inplace=True),
-            nn.Linear(256, 2, bias=True),
+            nn.Linear(256, 1, bias=True),
             # nn.Sigmoid(),
         )
 
-        # add fc to model layers
-        self.layers = nn.Sequential(*list(self.model.children())[:-1], self.fc)
-
-        # send to gpu
-        self.layers.to(self.device)
+        self.model.to(self.device)
 
         # freeze all layers and selectively unfreeze last inception layer for training
-        for param in self.layers.parameters():
+        for param in self.model.parameters():
             param.requires_grad = False
-        for param in self.layers[-1].parameters():
+        for param in self.model.fc.parameters():
             param.requires_grad = True
-        for param in self.layers[-2].parameters():
+        for param in self.model.avgpool.parameters():
             param.requires_grad = True
-        for param in self.layers[-3].parameters():
+        for param in self.model.dropout.parameters():
             param.requires_grad = True
-        for param in self.layers[-4].parameters():
+        for param in self.model.aux1.parameters():
             param.requires_grad = True
+        for param in self.model.aux2.parameters():
+            param.requires_grad = True
+        """
+        for param in self.model.inception5b.parameters():
+            param.requires_grad = 
+        """
 
     def forward(self, x):
-        x = self.layers(x)
-
+        x = self.model(x)
         return x
 
-    def model_train(self, dataloader, optimiser, loss_fn, batch_size):
-        self.layers.train()
+    def model_train(self, dataloader1, dataloader2, optimiser, loss_fn, batch_size):
+        self.model.train()
 
-        size = len(dataloader.dataset)
+        size = len(dataloader1.dataset)
+        num_batches = len(dataloader1)
+        losses = []
 
-        for batch, (X, y) in enumerate(dataloader):
-            X, y = X.to(self.device), y.to(self.device)
+        for batch, (data1, data2) in enumerate(zip(dataloader1, dataloader2)):
+
+            X1, y1 = data1
+            X2, y2 = data2
+
+            # get first dataloader batch
+            X1, y1 = X1.to(self.device), y1.float().to(self.device)
+
+            pred, aux1, aux2 = self.model(X1)
+            y1 = y1.unsqueeze(1)
+
+            loss_b1 = loss_fn(pred, y1)
+            loss_b1_aux1 = loss_fn(aux1, y1)
+            loss2_b1_aux2 = loss_fn(aux2, y1)
+
+            loss_b1 = loss_b1 * 0.3 * (loss_b1_aux1 + loss2_b1_aux2)
+
+            # get second dataloader batch
+            X2, y2 = X2.to(self.device), y2.float().to(self.device)
+
+            pred, aux1, aux2 = self.model(X2)
+            y2 = y2.unsqueeze(1)
+
+            loss_b2 = loss_fn(pred, y2)
+            loss_b2_aux1 = loss_fn(aux1, y2)
+            loss_b2_aux2 = loss_fn(aux2, y2)
+
+            loss_b2 = loss_b2 * 0.3 * (loss_b1_aux1 + loss_b2_aux2)
+
+            # sum losses over batches
+            loss = loss_b1 + loss_b2
+
             optimiser.zero_grad()
-
-            pred = self.layers(X)
-            loss = loss_fn(pred, y)
             loss.backward()
             optimiser.step()
+            losses.append(loss.item())
 
             if batch % 100 == 0:
-                loss, current = loss.item(), batch * batch_size + len(X)
-                print(f"loss: {loss:>7f}  [{current:>5d}/{size:>5d}]")
+                loss, current = loss.item(), batch * batch_size + len(X1)
+                print(f"loss: {loss:>7f}  [{current}/{size}]")
+
+        self.train_loss.append(sum(losses) / num_batches)
+
+    def model_test(self, dataloader1, dataloader2, loss_fn):
+        self.model.eval()
+
+        size = len(dataloader1.dataset) * 2
+
+        num_batches = len(dataloader1) * 2
+        test_loss, correct = 0, 0
+
+        with torch.no_grad():
+            for batch, (data1, data2) in enumerate(zip(dataloader1, dataloader2)):
+                X1, y1 = data1
+                X2, y2 = data2
+
+                X1, y1 = X1.to(self.device), y1.float().to(self.device)
+                pred = self.model(X1)
+                y1 = y1.unsqueeze(1)
+                test_loss += loss_fn(pred, y1).item()
+                correct += self.correct(pred, y1)
+
+                X2, y2 = X2.to(self.device), y2.float().to(self.device)
+                pred = self.model(X2)
+                y2 = y2.unsqueeze(1)
+                test_loss += loss_fn(pred, y2).item()
+                correct += self.correct(pred, y2)
+
+        test_loss /= num_batches
+        correct /= size
+        self.test_loss.append(test_loss)
+        print(
+            f"Test Error: \n Accuracy: {(100*correct):>0.1f}%, Avg loss: {test_loss:>8f} \n"
+        )
+
+    def correct(self, predictions, labels):
+        x = torch.sigmoid(predictions)
+        x = torch.where(x < 0.50, 0, 1)
+
+        correct = (x == labels).float().sum()
+        return correct
 
     # extracts features form the dropout layer of the NN
     def feature_extraction(self, dataloader):
-        self.layers.eval()
-        self.layers.to(self.device)
+        self.model.eval()
+        self.model.to(self.device)
 
         results = None
 
         with torch.no_grad():
             for batch, (X, y) in enumerate(dataloader):
-                X, y = X.to(self.device), y.to(self.device)
-                out = self.layers(X)
+                X, y = X.to(self.device), y.float().to(self.device)
+                out = self.model(X)
                 if results is None:
                     results = np.asarray(torch.Tensor.cpu(out))
                 else:
@@ -294,7 +382,7 @@ class GoogLeNet_ft(nn.Module):
 
     def summary(self):
         return torchinfo.summary(
-            self.layers,
+            self.model,
             (3, 224, 224),
             batch_dim=0,
             col_names=(

@@ -6,6 +6,7 @@ import polars as pl
 import polars.selectors as cs
 import math
 from pyrqa.opencl import OpenCL
+from pathlib import Path
 
 from sklearn.preprocessing import StandardScaler
 
@@ -217,19 +218,36 @@ def scale_input(a: np.array) -> np.array:
     return result
 
 
-def plot_reccurence(input_array, stride, iteration, dates, data_idx, target):
+def window(a, w=4, o=4, copy=False):
+    s0, s1 = a.strides
+    m, n = a.shape
+    view = np.lib.stride_tricks.as_strided(
+        a, strides=(s1, s0, s1), shape=(n - w + 1, m, w)
+    )[0::o]
+    if copy:
+        return view.copy()
+    else:
+        return view
+
+
+def plot_reccurence(
+    input_array: np.array,
+    stride: int,
+    iteration: int,
+    dates: pl.DataFrame,
+    data_idx: int,
+    distance: float,
+    length: int,
+    target: str,
+):
     """
     Generates reccurance plots and RQA matrix for input array.
 
     Slices input array based on user specified parameter stide.
 
-    Saves plots and RQA matrix for further analysis, as well as a mpaaing file of plots to data index, sensor names, and date range of the sensor for future reference.
+    Saves plots and RQA matrix for further analysis, as well as a mapping file of plots to data index, sensor names, and date range of the sensor for future reference.
 
     """
-    opencl = OpenCL(platform_id=0, device_ids=(0,))
-    splits = math.floor(input_array.shape[1] / stride)  # generate number of splits
-    array_list = np.array_split(input_array, splits, axis=1)  # split array
-
     first = True
     rqa_df = None
     columns = [
@@ -256,23 +274,111 @@ def plot_reccurence(input_array, stride, iteration, dates, data_idx, target):
     start_date_idx = 0
     end_date_idx = 0
 
-    if target == "normal":
+    if target == "Healthy":
         direct = "Train-Healthy"
         label = 0
-    if target == "abnormal":
+    if target == "Unhealthy":
         direct = "Train-Unhealthy"
         label = 1
+    if stride != 0:
+        strided = "sliding_window"
 
-    for i, a in enumerate(array_list):  # for each array in arraylist
-        for j, _ in enumerate(a):
+    opencl = OpenCL(platform_id=0, device_ids=(0,))
+
+    if stride == 0:  # if using non overlapping splits
+        splits = math.floor(input_array.shape[1] / length)  # generate number of splits
+        array_list = np.array_split(input_array, length, axis=1)  # split array
+
+    else:  # if using overlapping sliding windows
+        splits = window(input_array, length, stride, copy=True)
+
+    if stride == 0:
+        for i, a in enumerate(array_list):
+            # for each array in arraylist (corresponds to a split)
+            for j, _ in enumerate(a):  # for each array row (corresponds to a sensor)
+
+                # Generate RQA Matrix
+                ts = TimeSeries(a[j], embedding_dimension=3, time_delay=1)
+
+                rp = Settings(
+                    ts,
+                    analysis_type=Classic,
+                    neighbourhood=FixedRadius(distance),
+                    similarity_measure=EuclideanMetric,
+                    theiler_corrector=1,
+                )
+
+                computation = RQAComputation.create(rp, opencl=opencl, verbose=False)
+
+                result = computation.run()
+
+                result.min_diagonal_line_length = 2
+                result.min_vertical_line_length = 2
+                result.min_white_vertical_line_length = 2
+
+                # add results from run to df
+                if first == True:
+                    result = result.to_array()
+                    result = np.reshape(result, (1, result.shape[0]))
+                    rqa_df = pl.DataFrame(
+                        data=result, schema=columns, orient="row"
+                    ).lazy()
+
+                else:
+                    result = result.to_array()
+                    result = np.reshape(result, (1, result.shape[0]))
+                    new_results = pl.DataFrame(
+                        data=result, schema=columns, orient="row"
+                    ).lazy()
+                    rqa_df = pl.concat([rqa_df, new_results]).lazy()
+
+                # filepath
+                path = Path(
+                    f"../RP/{direct}/distance_{distance}/length_{length}/"
+                ).mkdir(parents=True, exist_ok=True)
+
+                # generate RP
+                computation = RPComputation.create(rp, opencl=opencl, verbose=False)
+                result = computation.run()
+                ImageGenerator.save_recurrence_plot(
+                    result.recurrence_matrix_reverse,
+                    f"../RP/{direct}/distance_{distance}/length_{length}/Iteration_{iteration}_Split_{i}_Sensor_{j}_{target}.png",
+                )
+
+                # get start and end date of array for this split
+                end_date_idx = start_date_idx + a.shape[1]
+                start_date = dates.slice(start_date_idx, 1).collect().item()
+                end_date = dates.slice(end_date_idx - 1, 1).collect().item()
+
+                # save rp filenames with time window, sensor name, and label (in this case, 0 = normal)
+                with open(
+                    f"../RP/{direct}/distance_{distance}/length_{length}/mapping.csv",
+                    "a",
+                ) as fileobj:
+                    fileobj.write(
+                        f"{data_idx},Iteration_{iteration}_Split_{i}_Sensor_{j}_{target}.png,{start_date},{end_date},{label}\n"
+                    )
+                    data_idx += 1
+
+                # set flag to false for df generation
+                first = False
+
+            start_date_idx = end_date_idx
+
+    else:
+        for i in range(splits.shape[0]):
+            # for each array in splits (corresponds to window)
+
+            arr = splits[i, :, :]
+            arr = arr.reshape(arr.shape[1], arr.shape[0])  # (size, sensors)
 
             # Generate RQA Matrix
-            ts = TimeSeries(a[j], embedding_dimension=3, time_delay=1)
+            ts = TimeSeries(arr, embedding_dimension=3, time_delay=1)
 
             rp = Settings(
                 ts,
                 analysis_type=Classic,
-                neighbourhood=FixedRadius(0.05),
+                neighbourhood=FixedRadius(distance),
                 similarity_measure=EuclideanMetric,
                 theiler_corrector=1,
             )
@@ -299,23 +405,31 @@ def plot_reccurence(input_array, stride, iteration, dates, data_idx, target):
                 ).lazy()
                 rqa_df = pl.concat([rqa_df, new_results]).lazy()
 
+            # filepath
+            path = Path(
+                f"../RP/{direct}/{strided}_updated/distance_{distance}/length_{length}/stride_{stride}"
+            ).mkdir(parents=True, exist_ok=True)
+
             # generate RP
             computation = RPComputation.create(rp, opencl=opencl, verbose=False)
             result = computation.run()
             ImageGenerator.save_recurrence_plot(
                 result.recurrence_matrix_reverse,
-                f"../RP/{direct}/Iteration_{iteration}_Split_{i}_Sensor_{j}_{target}.png",
+                f"../RP/{direct}/{strided}_updated/distance_{distance}/length_{length}/stride_{stride}/Iteration_{iteration}_window_{i}_{target}.png",
             )
 
             # get start and end date of array for this split
-            end_date_idx = start_date_idx + a.shape[1]
+            end_date_idx = start_date_idx + splits.shape[1]
             start_date = dates.slice(start_date_idx, 1).collect().item()
             end_date = dates.slice(end_date_idx - 1, 1).collect().item()
 
             # save rp filenames with time window, sensor name, and label (in this case, 0 = normal)
-            with open(f"../RP/{direct}/mapping.csv", "a") as fileobj:
+            with open(
+                f"../RP/{direct}/{strided}_updated/distance_{distance}/length_{length}/stride_{stride}/mapping.csv",
+                "a",
+            ) as fileobj:
                 fileobj.write(
-                    f"{data_idx},Iteration_{iteration}_Split_{i}_Sensor_{j}_{target}.png,{start_date},{end_date},{label}\n"
+                    f"{data_idx},Iteration_{iteration}_window_{i}_{target}.png,{start_date},{end_date},{label}\n"
                 )
                 data_idx += 1
 

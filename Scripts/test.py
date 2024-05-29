@@ -1,4 +1,4 @@
-from classes import GoogLeNet_ft, GoogLeNet
+from Scripts.classes_z import GoogLeNet_ft, GoogLeNet
 from contextlib import redirect_stdout
 
 
@@ -12,14 +12,13 @@ import torchinfo
 from torch.utils.data import Dataset
 
 model = GoogLeNet_ft()
-model2 = GoogLeNet()
 
 counter = 0
 total = 0
 
 # print(len(model.layers.parameters()))
 # checking that model intialised correctly
-for param in model.layers.parameters():
+for param in model.parameters():
     if param.requires_grad == True:
         counter += 1
         total += 1
@@ -30,5 +29,5 @@ percentage = counter / total
 print(f"Total Params that are trainable: {counter}")
 
 
-print(model.layers)
+print(model.model)
 # print(model2.model)
