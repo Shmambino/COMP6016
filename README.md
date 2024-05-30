@@ -9,7 +9,7 @@
 
 **Data**
 
-  Please visit @googledrive and download the 'RP' file located within COMP6016.
+  Please visit https://drive.google.com/drive/folders/15LuRVMOgtUJoovVukyzWGqXa3u2oNC82?usp=sharing and download the 'RP' file located within COMP6016.
   Place this file inside the main project directory. 
   
   This will allow you to run some of the model training.
